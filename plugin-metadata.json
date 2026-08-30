@@ -1,0 +1,11 @@
+{
+    "name": "cs2_fix_hostsay",
+    "alias": "fix_hostsay",
+    "display_name": "Fix Host Say",
+    "description": "Sample basic plugin",
+    "author": "xstage && CS2Fixes",
+    "url": "https://github.com/qstage",
+    "log_tag": "FixHostSay",
+    "license": "Public Domain",
+    "version": "1.0.0"
+}
