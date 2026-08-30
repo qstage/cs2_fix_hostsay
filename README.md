@@ -1,3 +1,8 @@
+# CS2 / Fix Host Say
+Fixes spamming in chat by players who are not fully connected to the server
+
+![Preview](preview.png)
+
 ## Manual building example
 
 ### Prerequisites
