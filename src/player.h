@@ -6,43 +6,43 @@
 class CPlayer
 {
 public:
-    inline void SetInGame(bool value)
+    inline void SetIsInGame(bool value)
     {
-        m_bIsGame = value;
+        m_bIsInGame = value;
     }
     inline bool IsInGame()
     {
-        return m_bIsGame;
-    }
-    inline void SetIsFullConnect(bool value)
-    {
-        m_bIsFullConnect = value;
-    }
-    inline bool IsFullConnect()
-    {
-        return m_bIsFullConnect;
+        return m_bIsInGame;
     }
 
 private:
-    bool m_bIsGame;
-    bool m_bIsFullConnect;
+    bool m_bIsInGame = false;
 };
 
 inline CPlayer m_vecPlayer[MAXPLAYERS];
 
-inline void AddPlayer(int slot)
+inline void AddPlayer(CPlayerSlot slot)
 {
-    m_vecPlayer[slot] = CPlayer();
+    if (!slot.IsValid())
+        return;
+
+    m_vecPlayer[slot.Get()] = CPlayer();
 }
 
-inline CPlayer& GetPlayer(int slot)
+inline CPlayer* GetPlayer(CPlayerSlot slot)
 {
-    return m_vecPlayer[slot];
+    if (!slot.IsValid())
+        return nullptr;
+
+    return &m_vecPlayer[slot.Get()];
 }
 
-inline int GetPlayerSlot(CEntityInstance* pController)
+inline CPlayer* GetPlayer(CEntityInstance* pController)
 {
-    return pController->GetEntityIndex().Get() - 1;
+    if (!pController)
+        return nullptr;
+
+    return &m_vecPlayer[pController->GetEntityIndex().Get() - 1];
 }
 
 #endif // _INCLUDE_PLAYER_H_

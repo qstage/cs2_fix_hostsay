@@ -9,8 +9,8 @@ class GameSessionConfiguration_t
 {
 };
 
+SH_DECL_HOOK5_void(IServerGameClients, ClientDisconnect, SH_NOATTRIB, 0, CPlayerSlot, ENetworkDisconnectionReason, const char *, uint64, const char *);
 SH_DECL_HOOK3_void(ICvar, DispatchConCommand, SH_NOATTRIB, 0, ConCommandRef, const CCommandContext &, const CCommand &);
-SH_DECL_HOOK4_void(IServerGameClients, ClientPutInServer, SH_NOATTRIB, 0, CPlayerSlot, char const *, int, uint64);
 SH_DECL_HOOK2(IGameEventManager2, LoadEventsFromFile, SH_NOATTRIB, 0, int, const char *, bool);
 SH_DECL_HOOK3_void(INetworkServerService, StartupServer, SH_NOATTRIB, 0, const GameSessionConfiguration_t &, ISource2WorldSession *, const char *);
 
@@ -43,8 +43,8 @@ bool MMSPlugin::Load(PluginId id, ISmmAPI *ismm, char *error, size_t maxlen, boo
 	GET_V_IFACE_ANY(GetServerFactory, g_pSource2GameClients, IServerGameClients, SOURCE2GAMECLIENTS_INTERFACE_VERSION);
 
 	SH_ADD_HOOK(ICvar, DispatchConCommand, g_pCVar, SH_MEMBER(this, &MMSPlugin::Hook_DispatchConCommand), false);
-	SH_ADD_HOOK(IServerGameClients, ClientPutInServer, g_pSource2GameClients, SH_MEMBER(this, &MMSPlugin::Hook_ClientPutInServer), true);
 	SH_ADD_HOOK(INetworkServerService, StartupServer, g_pNetworkServerService, SH_MEMBER(this, &MMSPlugin::Hook_StartupServer), true);
+	SH_ADD_HOOK(IServerGameClients, ClientDisconnect, g_pSource2GameClients, SH_MEMBER(this, &MMSPlugin::Hook_ClientDisconnect), true);
 
 	CModule server(GAMEBIN, "server");
 
@@ -67,24 +67,20 @@ int MMSPlugin::Hook_LoadEventsFromFile(const char *filename, bool bSearchAll)
 	RETURN_META_VALUE(MRES_IGNORED, 0);
 }
 
-void MMSPlugin::Hook_ClientPutInServer(CPlayerSlot slot, char const *pszName, int type, uint64 xuid)
+GAME_EVENT_F(player_team)
 {
-	GetPlayer(slot.Get()).SetInGame(true);
+	CPlayer *pPlayer = GetPlayer(pEvent->GetPlayerController("userid"));
+
+	if (pPlayer)
+		pPlayer->SetIsInGame(true);
 }
 
-GAME_EVENT_F(player_connect_full)
+void MMSPlugin::Hook_ClientDisconnect(CPlayerSlot slot, ENetworkDisconnectionReason reason, const char *pszName, uint64 xuid, const char *pszNetworkID)
 {
-	int iSlot = GetPlayerSlot(pEvent->GetPlayerController("userid"));
-	GetPlayer(iSlot).SetIsFullConnect(true);
-}
+	CPlayer *pPlayer = GetPlayer(slot);
 
-GAME_EVENT_F(player_disconnect)
-{
-	int iSlot = GetPlayerSlot(pEvent->GetPlayerController("userid"));
-	CPlayer& player = GetPlayer(iSlot);
-
-	player.SetInGame(false);
-	player.SetIsFullConnect(false);
+	if (pPlayer)
+		pPlayer->SetIsInGame(false);
 }
 
 void MMSPlugin::Hook_DispatchConCommand(ConCommandRef cmdHandle, const CCommandContext &ctx, const CCommand &args)
@@ -93,11 +89,14 @@ void MMSPlugin::Hook_DispatchConCommand(ConCommandRef cmdHandle, const CCommandC
 	bool bTeamSay = !V_stricmp(args.Arg(0), "say_team");
 
 	int iSlot = ctx.GetPlayerSlot().Get();
-	CPlayer &player = GetPlayer(iSlot);
+	if (iSlot == -1)
+		RETURN_META(MRES_IGNORED);
 
-	if ((bSay || bTeamSay) && (!player.IsInGame() || !player.IsFullConnect()))
+	CPlayer *pPlayer = GetPlayer(ctx.GetPlayerSlot());
+
+	if ((bSay || bTeamSay) && !pPlayer || !pPlayer->IsInGame())
 	{
-		Message("Blocked chat message from user ID %i not fully in game (%i %i)\n", g_pEngineServer->GetPlayerUserId(iSlot).Get(), player.IsInGame(), player.IsFullConnect());
+		Message("Blocked chat message from user ID %i not fully in game\n", g_pEngineServer->GetPlayerUserId(iSlot).Get());
 		RETURN_META(MRES_SUPERCEDE);
 	}
 }
@@ -105,8 +104,8 @@ void MMSPlugin::Hook_DispatchConCommand(ConCommandRef cmdHandle, const CCommandC
 bool MMSPlugin::Unload(char *error, size_t maxlen)
 {
 	SH_REMOVE_HOOK(ICvar, DispatchConCommand, g_pCVar, SH_MEMBER(this, &MMSPlugin::Hook_DispatchConCommand), false);
-	SH_REMOVE_HOOK(IServerGameClients, ClientPutInServer, g_pSource2GameClients, SH_MEMBER(this, &MMSPlugin::Hook_ClientPutInServer), true);
 	SH_REMOVE_HOOK(INetworkServerService, StartupServer, g_pNetworkServerService, SH_MEMBER(this, &MMSPlugin::Hook_StartupServer), true);
+	SH_REMOVE_HOOK(IServerGameClients, ClientDisconnect, g_pSource2GameClients, SH_MEMBER(this, &MMSPlugin::Hook_ClientDisconnect), true);
 
 	SH_REMOVE_HOOK_ID(g_iLoadEventsFromFileId);
 
