@@ -94,7 +94,7 @@ void MMSPlugin::Hook_DispatchConCommand(ConCommandRef cmdHandle, const CCommandC
 
 	CPlayer *pPlayer = GetPlayer(ctx.GetPlayerSlot());
 
-	if ((bSay || bTeamSay) && !pPlayer || !pPlayer->IsInGame())
+	if ((bSay || bTeamSay) && (!pPlayer || !pPlayer->IsInGame()))
 	{
 		Message("Blocked chat message from user ID %i not fully in game\n", g_pEngineServer->GetPlayerUserId(iSlot).Get());
 		RETURN_META(MRES_SUPERCEDE);
