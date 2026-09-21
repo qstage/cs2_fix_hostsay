@@ -3,20 +3,20 @@
 
 #include <ISmmPlugin.h>
 #include <igameevents.h>
-#include <sh_vector.h>
 #include "version_gen.h"
-
-#include "event.h"
 
 class MMSPlugin : public ISmmPlugin, public IMetamodListener
 {
 public:
 	bool Load(PluginId id, ISmmAPI *ismm, char *error, size_t maxlen, bool late);
 	bool Unload(char *error, size_t maxlen);
-	void Hook_DispatchConCommand(ConCommandRef cmdHandle, const CCommandContext& ctx, const CCommand& args);
-	int Hook_LoadEventsFromFile(const char* filename, bool bSearchAll);
-	inline void Hook_StartupServer(const GameSessionConfiguration_t& config, ISource2WorldSession* pSession, const char* pszMapName) { RegisterEventListeners(); }
-	void Hook_ClientDisconnect(CPlayerSlot slot, ENetworkDisconnectionReason reason, const char* pszName, uint64 xuid, const char* pszNetworkID);
+
+public:
+	KHook::Return<void> Hook_StartupServer(INetworkServerService *, const GameSessionConfiguration_t &config, ISource2WorldSession *pSession, const char *pszMapName);
+	KHook::Return<void> Hook_ClientDisconnect(IServerGameClients *, CPlayerSlot slot, ENetworkDisconnectionReason reason, const char *pszName, uint64 xuid, const char *pszNetworkID);
+	KHook::Return<void> Hook_DispatchConCommand(ICvar *, ConCommandRef cmdHandle, const CCommandContext &ctx, const CCommand &args);
+	KHook::Return<int> Hook_LoadEventsFromFile(IGameEventManager2 *thisptr, const char *filename, bool bSearchAll);
+
 public:
 	const char *GetAuthor() { return PLUGIN_AUTHOR; }
 	const char *GetName() { return PLUGIN_DISPLAY_NAME; }

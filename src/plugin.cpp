@@ -9,16 +9,24 @@ class GameSessionConfiguration_t
 {
 };
 
-SH_DECL_HOOK5_void(IServerGameClients, ClientDisconnect, SH_NOATTRIB, 0, CPlayerSlot, ENetworkDisconnectionReason, const char *, uint64, const char *);
-SH_DECL_HOOK3_void(ICvar, DispatchConCommand, SH_NOATTRIB, 0, ConCommandRef, const CCommandContext &, const CCommand &);
-SH_DECL_HOOK2(IGameEventManager2, LoadEventsFromFile, SH_NOATTRIB, 0, int, const char *, bool);
-SH_DECL_HOOK3_void(INetworkServerService, StartupServer, SH_NOATTRIB, 0, const GameSessionConfiguration_t &, ISource2WorldSession *, const char *);
+KHook::Virtual<ICvar, void, ConCommandRef, const CCommandContext &, const CCommand &> g_DispatchConCommand(&ICvar::DispatchConCommand, &g_ThisPlugin, &MMSPlugin::Hook_DispatchConCommand, nullptr);
+KHook::Virtual<IServerGameClients, void, CPlayerSlot, ENetworkDisconnectionReason, const char *, uint64, const char *> g_ClientDisconnect(&IServerGameClients::ClientDisconnect, &g_ThisPlugin, nullptr, &MMSPlugin::Hook_ClientDisconnect);
+KHook::Virtual<IGameEventManager2, int, const char *, bool> g_LoadEventsFromFile(&IGameEventManager2::LoadEventsFromFile, &g_ThisPlugin, nullptr, &MMSPlugin::Hook_LoadEventsFromFile);
+KHook::Virtual<INetworkServerService, void, const GameSessionConfiguration_t &, ISource2WorldSession *, const char *> g_StartupServer(&INetworkServerService::StartupServer, &g_ThisPlugin, nullptr, &MMSPlugin::Hook_StartupServer);
 
-int g_iLoadEventsFromFileId = -1;
-IGameEventManager2 *g_gameEventManager = nullptr;
+IGameEventManager2 *g_gameEventManager[2]{};
 
 MMSPlugin g_ThisPlugin;
 PLUGIN_EXPOSE(MMSPlugin, g_ThisPlugin);
+
+class CPlayerTeamEvent : public IGameEventListener2
+{
+	void FireGameEvent(IGameEvent *pEvent) override
+	{
+		if (auto *pPlayer = GetPlayer(pEvent->GetPlayerController("userid")))
+			pPlayer->SetIsInGame(true);
+	}
+} g_PlayerTeamEvent;
 
 void Message(const char *msg, ...)
 {
@@ -42,74 +50,72 @@ bool MMSPlugin::Load(PluginId id, ISmmAPI *ismm, char *error, size_t maxlen, boo
 	GET_V_IFACE_ANY(GetEngineFactory, g_pNetworkServerService, INetworkServerService, NETWORKSERVERSERVICE_INTERFACE_VERSION);
 	GET_V_IFACE_ANY(GetServerFactory, g_pSource2GameClients, IServerGameClients, SOURCE2GAMECLIENTS_INTERFACE_VERSION);
 
-	SH_ADD_HOOK(ICvar, DispatchConCommand, g_pCVar, SH_MEMBER(this, &MMSPlugin::Hook_DispatchConCommand), false);
-	SH_ADD_HOOK(INetworkServerService, StartupServer, g_pNetworkServerService, SH_MEMBER(this, &MMSPlugin::Hook_StartupServer), true);
-	SH_ADD_HOOK(IServerGameClients, ClientDisconnect, g_pSource2GameClients, SH_MEMBER(this, &MMSPlugin::Hook_ClientDisconnect), true);
+	g_DispatchConCommand.Add(g_pCVar);
+	g_StartupServer.Add(g_pNetworkServerService);
+	g_ClientDisconnect.Add(g_pSource2GameClients);
 
 	CModule server(GAMEBIN, "server");
+	g_gameEventManager[0] = (IGameEventManager2 *)server.FindVirtualTable("CGameEventManager");
 
-	auto pCGameEventManagerVTable = (IGameEventManager2 *)server.FindVirtualTable("CGameEventManager");
-	g_iLoadEventsFromFileId = SH_ADD_DVPHOOK(IGameEventManager2, LoadEventsFromFile, pCGameEventManagerVTable, SH_MEMBER(this, &MMSPlugin::Hook_LoadEventsFromFile), false);
+	g_LoadEventsFromFile.AddGlobal((IGameEventManager2 *)&g_gameEventManager[0]);
 
 	g_SMAPI->AddListener(this, this);
 	META_CONVAR_REGISTER(FCVAR_RELEASE | FCVAR_CLIENT_CAN_EXECUTE | FCVAR_GAMEDLL);
 
-	if (late)
-		RegisterEventListeners();
-
 	return true;
 }
 
-int MMSPlugin::Hook_LoadEventsFromFile(const char *filename, bool bSearchAll)
+KHook::Return<void> MMSPlugin::Hook_StartupServer(INetworkServerService *, const GameSessionConfiguration_t &config, ISource2WorldSession *pSession, const char *pszMapName)
 {
-	ExecuteOnce(g_gameEventManager = META_IFACEPTR(IGameEventManager2));
+	g_gameEventManager[1]->AddListener(&g_PlayerTeamEvent, "player_team", true);
 
-	RETURN_META_VALUE(MRES_IGNORED, 0);
+	return {KHook::Action::Ignore};
 }
 
-GAME_EVENT_F(player_team)
+KHook::Return<int> MMSPlugin::Hook_LoadEventsFromFile(IGameEventManager2 *thisptr, const char *filename, bool bSearchAll)
 {
-	CPlayer *pPlayer = GetPlayer(pEvent->GetPlayerController("userid"));
+	ExecuteOnce(g_gameEventManager[1] = thisptr);
 
-	if (pPlayer)
-		pPlayer->SetIsInGame(true);
+	return {KHook::Action::Ignore};
 }
 
-void MMSPlugin::Hook_ClientDisconnect(CPlayerSlot slot, ENetworkDisconnectionReason reason, const char *pszName, uint64 xuid, const char *pszNetworkID)
+KHook::Return<void> MMSPlugin::Hook_ClientDisconnect(IServerGameClients *, CPlayerSlot slot, ENetworkDisconnectionReason reason, const char *pszName, uint64 xuid, const char *pszNetworkID)
 {
-	CPlayer *pPlayer = GetPlayer(slot);
-
-	if (pPlayer)
+	if (auto *pPlayer = GetPlayer(slot))
 		pPlayer->SetIsInGame(false);
+
+	return {KHook::Action::Ignore};
 }
 
-void MMSPlugin::Hook_DispatchConCommand(ConCommandRef cmdHandle, const CCommandContext &ctx, const CCommand &args)
+KHook::Return<void> MMSPlugin::Hook_DispatchConCommand(ICvar *, ConCommandRef cmdHandle, const CCommandContext &ctx, const CCommand &args)
 {
 	bool bSay = !V_stricmp(args.Arg(0), "say");
 	bool bTeamSay = !V_stricmp(args.Arg(0), "say_team");
 
 	int iSlot = ctx.GetPlayerSlot().Get();
 	if (iSlot == -1)
-		RETURN_META(MRES_IGNORED);
+		return {KHook::Action::Ignore};
 
 	CPlayer *pPlayer = GetPlayer(ctx.GetPlayerSlot());
 
 	if ((bSay || bTeamSay) && (!pPlayer || !pPlayer->IsInGame()))
 	{
 		Message("Blocked chat message from user ID %i not fully in game\n", g_pEngineServer->GetPlayerUserId(iSlot).Get());
-		RETURN_META(MRES_SUPERCEDE);
+		return {KHook::Action::Supersede};
 	}
+
+	return {KHook::Action::Ignore};
 }
 
 bool MMSPlugin::Unload(char *error, size_t maxlen)
 {
-	SH_REMOVE_HOOK(ICvar, DispatchConCommand, g_pCVar, SH_MEMBER(this, &MMSPlugin::Hook_DispatchConCommand), false);
-	SH_REMOVE_HOOK(INetworkServerService, StartupServer, g_pNetworkServerService, SH_MEMBER(this, &MMSPlugin::Hook_StartupServer), true);
-	SH_REMOVE_HOOK(IServerGameClients, ClientDisconnect, g_pSource2GameClients, SH_MEMBER(this, &MMSPlugin::Hook_ClientDisconnect), true);
+	g_DispatchConCommand.Remove(g_pCVar);
+	g_StartupServer.Remove(g_pNetworkServerService);
+	g_ClientDisconnect.Remove(g_pSource2GameClients);
 
-	SH_REMOVE_HOOK_ID(g_iLoadEventsFromFileId);
+	g_LoadEventsFromFile.RemoveGlobal((IGameEventManager2 *)&g_gameEventManager[0]);
 
-	UnregisterEventListeners();
+	g_gameEventManager[1]->RemoveListener(&g_PlayerTeamEvent);
 
 	return true;
 }
